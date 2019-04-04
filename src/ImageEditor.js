@@ -56,6 +56,17 @@
         this.hammerManager.add(new Hammer.Rotate({ threshold: 0 })).recognizeWith(this.hammerManager.get('pan'));
         this.hammerManager.add(new Hammer.Pinch({ threshold: 0 })).recognizeWith([this.hammerManager.get('pan'), this.hammerManager.get('rotate')]);
 
+        this.hammerManager.add(new Hammer.Tap({ event: 'doubletap', taps: 2, threshold : 4, posThreshold: 20 }) ).recognizeWith(this.hammerManager.get('pan'));
+        this.hammerManager.add(new Hammer.Tap({ event: 'singletap', threshold : 4 }));
+        this.hammerManager.get('doubletap').recognizeWith('singletap');
+        this.hammerManager.get('singletap').requireFailure('doubletap');
+
+        // Clear selections if empty area of canvas was clicked on
+        this.hammerManager.on('singletap', this._clearSelection.bind(this));
+        
+        // Remove backbround  - change colour of pixel to transparent                 
+        this.hammerManager.on('doubletap', this._toTransparent.bind(this));
+        
         this.hammerManager.on("panstart panmove", this._onPan.bind(this));
         this.hammerManager.on("rotatestart rotatemove", this._onRotate.bind(this));
         this.hammerManager.on("pinchstart pinchmove", this._onPinch.bind(this));
@@ -117,10 +128,10 @@
 
         // set click to select
         // there is conflict between jquery click event and hammer.js in iphone or samsung
-        // so use 'tap' of hammer instead of jquery click event
-        new Hammer($imgWrapper[0]).on('tap', function() {
+        // so use 'tap' of hammer instead of jquery click event                
+        new Hammer($imgWrapper[0]).on('tap', function(ev) {
           if(image.clickToSelect)
-            this.selectImage(image);
+             this.selectImage(image);
 
           image.onClick && image.onClick();
         }.bind(this));
@@ -190,6 +201,7 @@
       },
 
       _onPan: function(e) {
+        if(this.activeImage == null) return;
         var image = this.activeImage;
 
         if(e.type == 'panstart') {
@@ -219,6 +231,7 @@
       },
 
       _onRotate: function(e) {
+        if(this.activeImage == null) return;
         var image = this.activeImage;
 
         if(e.type == 'rotatestart')
@@ -231,6 +244,7 @@
       },
 
       _onPinch: function(e) {
+        if(this.activeImage == null) return;
         var image = this.activeImage, scale;
 
         if(e.type == 'pinchstart')
@@ -278,7 +292,11 @@
           url: '',
           closeButtonRequire: true,
           clickToSelect: true,
-          onClick: null
+          onClick: null,
+          x: 0,
+          y: 0,
+          rotation: 0,
+          scale: 1
         };
 
         if(typeof url == 'string') {
@@ -291,8 +309,44 @@
         return defaultObj;
       },
 
+      // Clear selections if empty area of canvas was clicked on
+      _clearSelection: function(ev) {
+          if (ev.target !== this.$el[0]) return; 
+           this.activeImage = null;
+           this.images.forEach(function(image, i) {
+             image.$mask.css('background', 'rgba(0,0,0,0)'); });          
+      },
+
+
+      
+      // Remove backbround  - change colour of pixel to transparent 
+      _toTransparent: function(ev) {             
+          if(this.activeImage == null) return;
+
+          // get colour of pixel clicked on
+          var cvs = document.createElement('canvas'),
+              ctx = cvs.getContext('2d');
+
+          cvs.width = this.options.width;
+          cvs.height = this.options.height;
+          this._drawImage(this.activeImage, ctx);
+          
+          var divRect = this.$el[0].getBoundingClientRect();        
+          var data = ctx.getImageData(ev.center.x-divRect.left, ev.center.y-divRect.top, 1, 1).data;
+          if(data[0]+data[1]+data[2]+data[3] == 0) return; // ignore doubletap - not active image
+          
+          var transparentColor = { r:data[0], g:data[1], b:data[2], a:data[3] };
+          
+          this.toTransparent(this.activeImage, transparentColor, 20 );
+          
+     }, 
+      
+      
+      
+      
       // public methods
       moveImage: function(deltaX, deltaY) {
+        if(this.activeImage == null) return;
         var image = this.activeImage;
         image.transform.translate = {
           x: image.transform.translate.x + deltaX,
@@ -308,12 +362,14 @@
       },
 
       rotateImage: function(deg) {
+        if(this.activeImage == null) return;
         var image = this.activeImage;
         image.transform.rotation = this.startRotation + deg * 1;
         this._updateImageTransform(image);
       },
 
       scaleImage: function(scale) {
+        if(this.activeImage == null) return;
         var image = this.activeImage;
         image.transform.scale = scale;
         this._updateImageTransform(image);
@@ -340,25 +396,25 @@
               width: 0, // origin width once placed into the container
               centerPoint: {x: 0, y: 0},
               transform: {
-                translate: {x: 0, y: 0},
-                rotation: 0,
-                scale: 1
+                translate: {x: url.x, y: url.y},
+                rotation: url.rotation,
+                scale: url.scale
               }
             };
-
+        $img.attr('crossOrigin', 'anonymous');
         this.images.push(image);
 
         $img.on('load', function() {
           image.$imgWrapper = $('<span>').append($(this));
           image.img = this;
           that._placeImage(image);
+          that._updateImageTransform(image);
 
           var loaded = 0;
           that.images.forEach(function(im) {
             if(im.img)
               loaded ++;
           });
-
           if(loaded == that.images.length) { // all images loaded
             if(!that.inited) {
               that.inited = true;
@@ -465,6 +521,26 @@
         }.bind(this));
       },
 
+      setImageLayer: function(index) {       
+        var selectedIndex;
+        if(this.activeImage == null) return;
+        selectedIndex = this.activeImage.order - 1;
+
+          // index = 0 selected = 2 count = 4
+        var step = (index>selectedIndex) ? 1 : -1; // move direction
+        for(;index!=selectedIndex;) {
+          this.images[selectedIndex].order += step;
+          this.images[selectedIndex+step].order -= step;
+          var tmpImage = this.images[selectedIndex];
+          this.images[selectedIndex] = this.images[selectedIndex+step];
+          this.images[selectedIndex+step] = tmpImage;
+          this._placeImage(this.images[selectedIndex]);
+          selectedIndex += step;
+        }
+        this._placeImage(this.images[selectedIndex]);
+        
+      },
+      
       selectImage: function(index) {
         var targetImage;
 
@@ -503,8 +579,93 @@
         });
 
         return cvs;
+      },
+
+      toTransparent: function(image, transparencyColor, transparencyThreshold) {
+      
+ 
+          // Remove colour from canvas 
+          var canvas = document.createElement('canvas');
+          canvas.width = image.width;
+          canvas.height = image.height;
+          var ctx = canvas.getContext("2d");
+          ctx.drawImage(image.img, 0, 0,image.width,image.height);
+      
+          var pixels = ctx.getImageData(0, 0, image.width, image.height);
+
+          var transparencyColorLab =  this.rgba2lab(transparencyColor);
+          for (var i = 0; i < pixels.data.length; i += 4) {
+            var color = {
+              r: pixels.data[i+0],
+              g: pixels.data[i+1],
+              b: pixels.data[i+2],
+              a: pixels.data[i+3]
+            }
+
+            var delta = this.rgbaLabDifference(color, transparencyColorLab);
+
+            if (delta < transparencyThreshold) {
+              pixels.data[i+0] = 0;
+              pixels.data[i+1] = 0;
+              pixels.data[i+2] = 0;
+              pixels.data[i+3] = 0;
+            }
+          }
+          ctx.putImageData(pixels, 0, 0);
+      
+          this.setImage(canvas.toDataURL(), image.order -1 , 1);
+      
+      },
+
+  
+      rgbaLabDifference: function(colorA, labB) {
+         return this.deltaE(this.rgba2lab(colorA), labB);
+      },
+
+      rgba2lab: function(rgba) {
+        var r = rgba.r / rgba.a,
+            g = rgba.g / rgba.a,
+            b = rgba.b / rgba.a,
+            x, y, z;
+
+        r = (r > 0.04045) ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+        g = (g > 0.04045) ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+        b = (b > 0.04045) ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+
+        x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+        y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1.00000;
+        z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+
+        x = (x > 0.008856) ? Math.pow(x, 1/3) : (7.787 * x) + 16/116;
+        y = (y > 0.008856) ? Math.pow(y, 1/3) : (7.787 * y) + 16/116;
+        z = (z > 0.008856) ? Math.pow(z, 1/3) : (7.787 * z) + 16/116;
+
+        return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)]
+	  },
+
+
+      deltaE: function(labA, labB) {
+        var deltaL = labA[0] - labB[0];
+        var deltaA = labA[1] - labB[1];
+        var deltaB = labA[2] - labB[2];
+        var c1 = Math.sqrt(labA[1] * labA[1] + labA[2] * labA[2]);
+        var c2 = Math.sqrt(labB[1] * labB[1] + labB[2] * labB[2]);
+        var deltaC = c1 - c2;
+        var deltaH = deltaA * deltaA + deltaB * deltaB - deltaC * deltaC;
+        deltaH = deltaH < 0 ? 0 : Math.sqrt(deltaH);
+        var sc = 1.0 + 0.045 * c1;
+        var sh = 1.0 + 0.015 * c1;
+        var deltaLKlsl = deltaL / (1.0);
+        var deltaCkcsc = deltaC / (sc);
+        var deltaHkhsh = deltaH / (sh);
+        var i = deltaLKlsl * deltaLKlsl + deltaCkcsc * deltaCkcsc + deltaHkhsh * deltaHkhsh;
+        return i < 0 ? 0 : Math.sqrt(i);
       }
 
+  
+  
+  
+      
     };
 
     return new ImageEditor(this, options);
