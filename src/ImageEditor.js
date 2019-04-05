@@ -19,7 +19,8 @@
         addImageAnimation: true,
         removeImageAnimation: true,
         onImagesLoaded: function() {},
-        onInitCompleted: function() {}
+        onInitCompleted: function() {},
+        transparencyThreshold:10
       };
 
       this.$el = $el;
@@ -337,14 +338,16 @@
           
           var transparentColor = { r:data[0], g:data[1], b:data[2], a:data[3] };
           
-          this.toTransparent(this.activeImage, transparentColor, 20 );
+          this.toTransparent(this.activeImage, transparentColor, this.options.transparencyThreshold );
           
      }, 
       
-      
-      
-      
       // public methods
+      setTransparencyThreshold: function(threshold) {      
+        this.options.transparencyThreshold = threshold;
+      
+      },     
+      
       moveImage: function(deltaX, deltaY) {
         if(this.activeImage == null) return;
         var image = this.activeImage;
